@@ -3,7 +3,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .global_configs import *
 
 from functools import partial
 from mamba_ssm.modules.mamba_simple import Mamba, Block

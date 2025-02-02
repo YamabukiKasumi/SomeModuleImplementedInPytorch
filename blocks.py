@@ -13,6 +13,7 @@ try:
 except ImportError:
     RMSNorm, layer_norm_fn, rms_norm_fn = None, None, None
 
+#Create Mamba block
 def create_block(
         d_model,
         ssm_cfg=None,
@@ -41,6 +42,7 @@ def create_block(
         block.layer_idx = layer_idx
         return block
 
+#1D-Conv for sequence
 class Conv1d4nonverbal(nn.Module):
     def __init__(self, in_dim, out_dim, kernel_size, stride, padding, dropout):
         super(Conv1d4nonverbal, self).__init__()
@@ -62,21 +64,8 @@ class Conv1d4nonverbal(nn.Module):
         # x = x.reshape(shapeOne, shapeTwo, shapeThree)
         # x = self.ffn(x)
         return x
-    
-class ct_conv(nn.Module):
-    def __init__(self, in_dim, out_dim, length):
-        super(ct_conv, self).__init__()
-        self.layerOne = PositionWiseFeedForwardModified(in_dim, 256, out_dim, 0)
-        self.layerNorm = nn.LayerNorm(out_dim)
-        # self.convLayer = nn.Conv1d(in_channels=out_dim, out_channels=out_dim, kernel_size=length)
-        self.avgpooling = nn.AdaptiveMaxPool1d(1)
-    def forward(self, tensor):
-        tensor = self.layerOne(tensor)
-        tensor = tensor.permute(0, 2, 1)
-        tensor_conv = self.avgpooling(tensor)
-        tensor = tensor_conv.permute(0, 2, 1)
-        return tensor
-    
+
+#Implementation for the MSG in paper “Dynamically Shifting Multimodal Representations via Hybrid-Modal Attention for Multimodal Sentiment Analysis”
 class MultiModalShiftGate(nn.Module):
     def __init__(self, dim, mu = 0.5, ep = 1e-7):
         super(MultiModalShiftGate, self).__init__()
@@ -93,7 +82,7 @@ class MultiModalShiftGate(nn.Module):
         adjuested_rep = eta * fused
         return t + adjuested_rep
     
-    
+#Variation for the MSG in paper “Dynamically Shifting Multimodal Representations via Hybrid-Modal Attention for Multimodal Sentiment Analysis”
 class MultiModalShiftGateBi(nn.Module):
     def __init__(self, dim, mu = 0.5, ep = 1e-7):
         super(MultiModalShiftGateBi, self).__init__()
@@ -109,46 +98,32 @@ class MultiModalShiftGateBi(nn.Module):
         return t + adjuested_rep
     
 
+#BiGRU
 class BiGRUModel(nn.Module):
     def __init__(self, input_size, hidden_size, num_layers=1):
         super(BiGRUModel, self).__init__()
         # 定义双向 GRU
         self.gru = nn.GRU(input_size, hidden_size, num_layers, 
                           batch_first=True, bidirectional=True)
-        self._initialize_weights()
-
-    def _initialize_weights(self):
-        for name, param in self.gru.named_parameters():
-            if 'weight' in name:
-                param.data.fill_(0.0)
-            elif 'bias' in name:
-                param.data.fill_(0.0)
 
     def forward(self, x):
         # x 的形状为 (batch_size, sequence_length, input_size)
         output, _ = self.gru(x)
         return output
-    
-class BiLSTMFE(nn.Module):
+
+#BiLSTM
+class BiLSTM(nn.Module):
     def __init__(self, in_dim, out_dim):
-        super(BiLSTMFE, self).__init__()
+        super(BiLSTM, self).__init__()
         self.layernorm = nn.LayerNorm(in_dim)
         self.bilstm = nn.LSTM(in_dim, out_dim, batch_first=True, bidirectional=True, bias=False)
-        self._initialize_weights()
-        
-    def _initialize_weights(self):
-        for name, param in self.bilstm.named_parameters():
-            if 'weight' in name:
-                # 使用 Xavier 初始化
-                nn.init.xavier_uniform_(param.data)
-            elif 'bias' in name:
-                nn.init.constant_(param.data, 0)
 
     def forward(self, x):
         # out1 = self.layernorm(x)
         out, _ = self.bilstm(x)
         return out
-    
+
+#Create BiMambaBlocks
 class NewMambaBlock(nn.Module):
     def __init__(
         self,
@@ -257,7 +232,7 @@ class NewMambaBlock(nn.Module):
 
         return hidden_states
     
-
+#Class of Mamba block
 class MambaBlock(nn.Module):
     def __init__(self, in_channels, out_dim, n_layer=1, bidirectional=True):
         super(MambaBlock, self).__init__()
@@ -307,6 +282,7 @@ class MambaBlock(nn.Module):
         
         return residual
 
+#Multi-head Self Attention
 class SelfAttention(nn.Module):
     def __init__(self, hidden_size, head_num=8):
         super(SelfAttention, self).__init__()
@@ -337,6 +313,7 @@ class SelfAttention(nn.Module):
         context_layer = context_layer.view(*new_context_layer_shape)
         return context_layer
 
+#Multi-head Cross Attention
 class CrossAttention(nn.Module):
     def __init__(self, hidden_size, head_num=8):
         super(CrossAttention, self).__init__()
@@ -382,7 +359,8 @@ class ClassificationHead(nn.Module):
         x = self.dropout(x)
         x = self.out_proj(x)
         return x
-    
+
+#Feedforward module
 class PositionWiseFeedForward(nn.Module):
 
     """
@@ -402,7 +380,8 @@ class PositionWiseFeedForward(nn.Module):
         inter = self.dropout_1(self.gelu(self.w_1(self.layer_norm(x))))
         output = self.dropout_2(self.w_2(inter))
         return output
-    
+
+#Feedforward model with assigned dimension
 class PositionWiseFeedForwardModified(nn.Module):
 
     """
@@ -423,55 +402,8 @@ class PositionWiseFeedForwardModified(nn.Module):
         output = self.dropout_2(self.w_2(inter))
         return output
     
-def drop_path(x, drop_prob=0.0, training=False):
-    """
-    Stochastic Depth per sample.
-    """
-    if drop_prob == 0.0 or not training:
-        return x
-
-    keep_prob = 1 - drop_prob
-    shape = (x.shape[0],) + (1,) * (x.ndim - 1)
-    mask = keep_prob + torch.rand(shape, dtype=x.dtype, device=x.device)
-    mask.floor_()
-    x = x.div(keep_prob) * mask
-
-    return x
-
-
-class DropPath(nn.Module):
-    """
-    Drop paths per sample (when applied in main path of residual blocks).
-    """
-
-    def __init__(self, drop_prob=None):
-        super(DropPath, self).__init__()
-
-        self.drop_prob = drop_prob
-
-    def forward(self, x):
-        x = x.permute(1, 0, 2)
-        res = drop_path(x, self.drop_prob, self.training)
-        return res.permute(1, 0, 2)
     
-class contextatten(nn.Module):
-    def __init__(self):
-        super(contextatten, self).__init__()
-    def forward(self, text, audio, video):
-        result11 = []
-        result22 = []
-        for i in range(video.shape[0]):
-            text1 = text[i]
-            visual = video[i]
-            acoustic = audio[i]
-            result1 = torch.matmul(text1, visual.T)
-            result2 = torch.matmul(text1, acoustic.T)
-            result11.append(torch.matmul(torch.softmax(result1, dim=1), visual))
-            result22.append(torch.matmul(torch.softmax(result2, dim=1), acoustic))
-        resultv = torch.stack(result11)
-        resulta = torch.stack(result22)
-        return resulta, resultv
-    
+#Fusion gate with feedforward
 class GatedMultimodalLayerWithFFN(nn.Module):
     
     def __init__(self, size_in1, size_in2, dropout, size_out=32):
@@ -495,7 +427,8 @@ class GatedMultimodalLayerWithFFN(nn.Module):
         z = z.expand_as(x1)
         h = z * h1 + (1 - z) * h2
         return h
-    
+
+#Fusion gate
 class GatedMultimodalLayer(nn.Module):
     
     def __init__(self, size_in1, size_in2, size_out=32):
@@ -517,6 +450,7 @@ class GatedMultimodalLayer(nn.Module):
         h = z * x1 + (1 - z) * x2
         return h
 
+#Posiembedding
 class PositionEmbeddingSine(nn.Module):
     """
     This is a more standard version of the position embedding, very similar to the one
@@ -560,7 +494,8 @@ class PositionEmbeddingSine(nn.Module):
         pos_x = torch.stack((pos_x[:, :, 0::2].sin(), pos_x[:, :, 1::2].cos()), dim=3).flatten(2)  # (bsz, L, num_pos_feats*2)
         # import ipdb; ipdb.set_trace()
         return pos_x  # .permute(0, 2, 1)  # (bsz, num_pos_feats*2, L)
-    
+
+#CFM
 class CrossFusionModule(nn.Module):
     """
     crossmodal fusion module: to get crossmodal attention and to return the fused feature.
@@ -604,7 +539,8 @@ class CrossFusionModule(nn.Module):
                                                             atten_visualfeatures), dim=1).transpose(1, 2))
 
         return fused_features
-    
+
+#Grouped gated fusion
 class GGF(nn.Module):
     # 分组门控融合机制
     def __init__(self, input_dim, intermediate_dim, output_dim):
